@@ -25,8 +25,10 @@ Do not put it in `DecadesGuildOps_Data/Data.lua`. That file is replaced whole.
 
 ## The other addon
 
-`addon/DecadesMarket/` is the dump pipe. `/dmdump` writes SavedVariables.
-No window. The window is the Decades page.
+`addon/DecadesMarket/` (2.0.0) is a separate addon with its own small window (`/dm`):
+watchlist and alerts, tooltip trends, bag value, movers. It is also still the dump pipe:
+`/dmdump` writes the SavedVariables this pipeline ingests. The Decades Market page is the
+analysis; the window is the player's own tools. See `addon/DecadesMarket/README.md`.
 
 ## Run it
 
@@ -39,3 +41,16 @@ run_watcher.bat
 
 `out/wow_market.db` is a working database from a live realm so the tools run
 before the first scan. Raw character dumps are not in this archive.
+
+## Downloads
+
+Each release carries three separate packages:
+
+| Package | For | What it is |
+| --- | --- | --- |
+| `decades-market-handoff.zip` | The Decades app owner | `Features/Market.lua`, a sample `MarketBoard.lua`, the exporter, and `DECADES_HANDOFF.md`. |
+| `DecadesMarket-2.0.0.zip` | Players | The standalone addon. Unzip into `Interface/AddOns/`. Needs Auctionator. Not required for the Decades Market page. |
+| `decades-market.zip` | Whoever runs the pipeline | Everything: page, standalone addon, tools, watcher, headless addon tests, working database. |
+
+The page and the standalone addon have been checked headlessly against a mocked
+client. Neither has been reviewed in the live client beyond the author's install.
