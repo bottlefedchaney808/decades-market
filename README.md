@@ -9,9 +9,13 @@ install, not a side project.
 `decades/MarketBoard.lua`. See `DECADES_HANDOFF.md` for mounting that page.
 
 The larger job — scanner, price store, pooled guild scans, desktop sync — is
-`HANDOFF_INTEGRATION.md`. Start there. `addon/DecadesMarket/` 2.3.0 is the reference
-the author accepted in the live client. Port its maths. Do not treat the Python mover
+`HANDOFF_INTEGRATION.md` (revision 3, for addon 2.5.1). Start there. `addon/DecadesMarket/`
+2.5.1 is the reference; 2.3.0 is the last build the author accepted in the live client in
+writing. Port its maths. Do not treat the Python mover
 ranking as the spec.
+
+Every formula and threshold, for the addon and for the pipeline board (squeeze, breakout
+and drain included), is in `CALCULATIONS.md`.
 
 ## What produces the numbers
 
@@ -40,8 +44,13 @@ Pipeline control stays on screen, disabled, and its tooltip says what produces o
 
 ## The other addon
 
-`addon/DecadesMarket/` (2.3.0) is the standalone addon: its own scanner, window (`/dm`),
-watchlist, tooltip trends, bag value, movers, and a momentum meter. It is also the dump
+`addon/DecadesMarket/` (2.5.1) is the standalone addon: its own scanner, window (`/dm`),
+watchlist, tooltip trends, bag value, movers, and a momentum meter. 2.4.0 adds posting at a
+smart price, a weekday pattern and an in-game vendor-flip page. 2.5.0 adds cancel-and-repost
+from My auctions, a crafting-cost floor on the smart price, and 35 days of price history.
+2.5.1 makes the cancel work (the addon now asks the house for your auctions), corrects the
+unit price of owned auctions, and adds crafting flips (craft and sell to a vendor).
+Those are newer than the 2.3.0 the author accepted in the live client. It is also the dump
 pipe: `/dmdump` writes the SavedVariables this pipeline ingests. The Decades Market page
 is the analysis; the window is the reference for the features still to be ported. See
 `addon/DecadesMarket/README.md`.
@@ -57,13 +66,3 @@ run_watcher.bat
 
 `out/wow_market.db` is a working database from a live realm so the tools run
 before the first scan. Raw character dumps are not in this archive.
-
-## Downloads
-
-Each release carries three separate packages:
-
-| Package | For | What it is |
-| --- | --- | --- |
-| `decades-market-handoff.zip` | The Decades maintainers | `HANDOFF_INTEGRATION.md`, the addon source as reference implementation, the headless test rig, the Market page files, and the exporter. Start with the handoff document. |
-| `DecadesMarket-2.3.0.zip` | Players | The standalone addon. Unzip into `Interface/AddOns/`. Works on its own; Auctionator optional. |
-| `decades-market.zip` | Whoever runs the pipeline | Everything: addon, page, tools, watcher, tests, working database. |
