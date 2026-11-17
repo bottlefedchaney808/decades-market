@@ -1,12 +1,12 @@
-# Decades Market — every calculation (addon 2.5.1)
+# Decades Market — every calculation (addon 2.7.0)
 
 Companion to `HANDOFF_INTEGRATION.md`. That file says what to build and where; this one
 states every number the addon and the pipeline compute, as the code computes it today.
 Each section names the file and function it was read from. Where this file and the code
 disagree, the code wins and this file is wrong.
 
-Written 2026-11-12 against the files in this archive. Nothing in the code changed to
-produce it.
+Written 2026-11-12 against 2.5.1; brought up to 2.7.0 on 2026-11-17 (sections 11, 19,
+24 and the new 27). Nothing in the code changed to produce it.
 
 ## Contents
 
@@ -37,6 +37,7 @@ produce it.
 24. Every threshold in one table
 25. Known biases and things never measured
 26. Open decision: should momentum use sales?
+27. Item versions and buying (2.6.0, 2.7.0)
 
 ---
 
@@ -523,6 +524,12 @@ AH exit only: sell hours = SellHours(ref, queue = max(0, unitsAtOrBelow(ref) - u
 
 Sorted by profit. 100 rows.
 
+**Per version (2.7.0).** An item priced per version (section 27) is evaluated once per
+current version, on that version's own book and history, with the same rule except:
+`skip (thin)` is `auctions < verMin or units < verMin` (`verMin` default 3, 1 to 50), and
+`skip (history)` counts the version's own recorded days. Sell hours use the version's own
+sell-through. A row carries `vkey`, `vname`, `vlink`.
+
 ---
 
 ## 12. Reset finder
@@ -852,7 +859,10 @@ looking like a weekday effect. Weekday of a scan-day = `date("%w", DAY0 + day*86
 `ToolsPost.lua`.
 
 - Price must be a whole number of copper, 1 or more. Quantity 1 to what the house will
-  take (`GetAvailablePostCount`).
+  take (`GetAvailablePostCount`); **1 for any non-commodity item** (2.5.5, no multisell).
+- A non-commodity item under `ITEM_MIN_BUYOUT` (100c) is refused, reason `itemfloor` (2.7.0).
+- Refused while a sell, cancel or purchase is in flight (`posting`), and while the house
+  is marked stuck (`stuck`).
 - Deposit from `CalculateCommodityDeposit` / `CalculateItemDeposit` for the chosen
   duration; refused when the player's gold is under it.
 - `total = price * qty`, `net = Cut(price) * qty`.
@@ -1111,6 +1121,16 @@ guesses; none has been tuned against real sales.
 | Pipeline: tight box | width < 0.10 | breaks |
 | Pipeline: squeeze | band0 > 0.10, band1 < 0.5 x band0 | squeeze |
 | Pipeline: drain | a0 >= 10, aN <= 0.4 x a0, 3+ days | drain |
+| `SNIPE_VER_MIN_LISTINGS` | 3 (player sets 1-50) | listings and units one gear version needs in the Sniper |
+| `ITEM_MIN_BUYOUT` | 100c | lowest single-item post |
+| `STALL_SECONDS` (ToolsPost) | 8 s | silence before Post turns into Release |
+| `STUCK_SECONDS` (ToolsPost) | 15 s | unanswered request before the house is called stuck |
+| `BUY_CAP_SLACK` | 0.05 | craft material cap over the dearest planned listing |
+| `BUY_QUOTE_DRIFT` | 0.02 | quoted total over the searched total that is let go |
+| `BUY_QUOTE_KEEP` | 30 s | quote waiting for Confirm before it is let go |
+| `BUY_RESULTS_FRESH` | 90 s | age of a live search still good to buy from |
+| `BUY_SEARCH_TIMEOUT`, `BUY_QUOTE_TIMEOUT`, `BUY_CONFIRM_TIMEOUT` | 15, 15, 20 s | waits |
+| `BUY_LINES_MAX`, `BUY_PACKS_MAX`, `BUY_ROWS_MAX` | 40, 999, 200 | basket limits |
 
 ---
 
@@ -1153,3 +1173,57 @@ With guild scans pooled on the server this limit mostly goes away, which is a re
 decide it together with the server work.
 
 Not built. The choice belongs to whoever owns the momentum rule.
+
+---
+
+## 27. Item versions and buying (2.6.0, 2.7.0)
+
+**Version key.** `Core.lua`, `Util.VersionKey(link)`. From the link's `item:` fields
+(1-based): field 7 the old suffix, field 13 the number of bonus IDs, then the IDs (at
+most 16 read).
+
+```
+parts = []
+if suffix != 0: parts += "s" .. suffix
+parts += sorted(bonus IDs)
+key   = join(parts, ".")        "" = the plain item
+```
+
+Link level, spec, context and modifiers are left out.
+
+**Per-version store.** `Scan.lua` reads `GetReplicateItemLink` for weapon and armour rows
+only and aggregates each key the way it aggregates an item (section 2). `Store.lua`
+`CommitVersions` writes `e.vr[key]` with the same history, ladder, market price and
+sell-through as an item (sections 3 and 5), plus `nm` (name), `lk` (link), `lt` (read
+time). Nothing is stored when every listing is the plain item. A version is current when
+`ve.lt == e.lt`. Rows with no link yet count toward the item only.
+
+**Buy caps.** `ToolsBuy.lua`.
+
+| Source | Units | Cap per unit |
+| --- | --- | --- |
+| Sniper | the row's units | the row's `maxBuy` |
+| Resets | units up to the chosen clear-to level | that level's price |
+| Shopping list | the line's want | the line's cap |
+| Item card / Alt-click | 1 | market price (the version's when it is one) |
+| Recipe, n packs | `max(0, per x n - held in bags)` when "use bags" is on | below |
+
+Recipe lines are planned with `Tools.MaterialPlan` (section 14: scanned listings cheapest
+first while not dearer than a merchant, the merchant for the rest).
+
+```
+top = dearest scanned listing the plan reaches
+      (raised to market price when part of the quantity is estimated past the book)
+cap = ceil(top * 1.05), never above the merchant's price
+```
+
+A cap the player types is kept when the packs change.
+
+**Commodity purchase.** Ask the house for `n` units at or under the cap (units counted
+from the live search). Let it go when `unitPrice > cap`, or when `totalPrice > searched
+total * 1.02`, then search again. Otherwise the next click confirms.
+
+**Item purchase.** Live item rows at or under the cap, cheapest first, the version's key
+only when the line names one, never the player's own. One auction per click; a refused
+auction is not tried again.
+

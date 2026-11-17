@@ -1,21 +1,24 @@
-# Decades Market — implementation handoff (revision 3, addon 2.5.1)
+# Decades Market — implementation handoff (revision 4, addon 2.7.0)
 
 For whoever implements this inside Decades: the `DecadesGuildOps` addon, the desktop app
 and the cloud server. Written to be read cold. We cannot see the Decades source, so
 everything here is stated from our side of the boundary. Where a decision is yours it is
 listed in section 11, not guessed.
 
-This revision replaces the one shipped with 2.3.0 on 2026-11-11. If you read that one,
-section 0a is the difference. Everything else is restated in full, so this file stands on
-its own.
+This revision replaces revision 3 (addon 2.5.1, 2026-11-12). If you read that one,
+section 0a is the difference. Section 0b is the older 2.3.0 → 2.5.1 difference, kept for
+anyone coming from revision 2. Everything else is restated in full, so this file stands
+on its own.
 
 ## 0. Read this first
 
 **What you are getting.** A working standalone addon, `addon/DecadesMarket/` version
-**2.5.1**, plus its headless test rig and a Python pipeline. The addon scans the auction
+**2.7.0**, plus its headless test rig and a Python pipeline. The addon scans the auction
 house itself, keeps its own price history, and provides a trading window with thirteen
-pages and an item card. From 2.4.0 it also **posts auctions**, and from 2.5.0 it
-**cancels them**. It does not need Auctionator, Decades, a server or a desktop app.
+pages, an item card and a docked Buy panel. From 2.4.0 it **posts auctions**, from 2.5.0
+it **cancels them**, from 2.6.0 it **buys**, and from 2.7.0 it prices each **version** of
+a gear item ("... of the Boar", "... of the Hawk") separately. It does not need
+Auctionator, Decades, a server or a desktop app.
 
 **What we are asking for.** Three things, in order of value to players:
 
@@ -40,15 +43,69 @@ tests.
    price source, the smart price, posting, cancelling and the two flip tools. Those
    sections are the contract.
 3. `addon/DecadesMarket/DUMP_SPEC.md` — every field that crosses the boundary. Unchanged
-   since 2.3.0.
+   since 2.3.0 (2.7.0 changes only *when* the dump is built; section 6).
 4. `Tools.lua` top of file — conventions, thresholds (`Tools.K`), reasons, help text.
-5. Comment blocks at the top of `ToolsPrice.lua`, `ToolsPost.lua`, `ToolsFlips.lua`,
-   and in `Data.lua`, `Store.lua` and `ToolsSell.lua` (the owned-auction block).
+5. Comment blocks at the top of `ToolsPrice.lua`, `ToolsPost.lua`, `ToolsBuy.lua`,
+   `ToolsFlips.lua`, and in `Data.lua`, `Store.lua`, `Core.lua` (item versions) and
+   `ToolsSell.lua` (the owned-auction block). In `ToolsPost.lua` read "a sell in flight"
+   and "the stuck house": they are the lessons of four releases.
 6. Run the rig (section 10).
 
 `tools/trend_wow.py` is **not** the mover specification. Port the addon's `Data.lua`.
 
-## 0a. What changed since the 2.3.0 handoff
+## 0a. What changed since revision 3 (addon 2.5.1 → 2.7.0)
+
+**New files** (both in the toc):
+
+| File | What it adds |
+| --- | --- |
+| `ToolsBuy.lua` | Buying: a basket of lines `{ item, units, cap }`, each searched live and bought only at or under its cap. The only code that buys |
+| `UIBuy.lua` | The Buy panel, docked beside the window or the auction house |
+
+**Changed files:**
+
+| File | Change |
+| --- | --- |
+| `Core.lua` | `Util.VersionKey(link)`: the version key of a gear link (its bonus IDs). Version |
+| `Scan.lua` | Weapon and armour rows are also aggregated per version (their link is read with `GetReplicateItemLink`); the item name is kept on the entry (`nm`) for search by name |
+| `Store.lua` | `e.vr[key]`: one sub-entry per version, in the same layout as the item (history, ladder, sell-through); `Store.CommitVersions` |
+| `Data.lua` | `Data.Versions(id)`, `Data.Version(id, key)`, `Data.VersionHistory`, name search (`Data.FindItems(text, limit)`) |
+| `ToolsBook.lua` | The Sniper judges each version on its own book and history (section 2) |
+| `ToolsPost.lua` | A sell in flight (2.5.4), one unit per click for items (2.5.5), the 1s item floor and the stuck-house watchdog (2.7.0), `/dm unstick`, `/dm posttrace` |
+| `Dump.lua` | Built at logout or `/reload` only, no longer when the house closes (the hitch fix) |
+| `Tools.lua` | `BUY_*`, `SNIPE_VER_MIN_LISTINGS`, `ITEM_MIN_BUYOUT`; reasons `itemfloor`, `stuck`, `posting`, `notready`; saved `buyLog`; saved `postTrace` (1000 rows) |
+| `Tooltip.lua`, `UICard.lua` | The hovered version's price; a Versions section on the item card |
+| `UI.lua` and the other page files | Buy buttons and Alt-click-to-buy on every page that recommends a purchase; search by name |
+
+**Four releases were about one fault: "the auction house is busy" until logout.** Each
+fix is in section 4 under Posting, and in `ToolsPost.lua`. In short:
+
+1. 2.5.2/2.5.3: a post call that returns `true` has not posted. The client holds it and
+   shows its own `AUCTION_HOUSE_POST_WARNING` dialog; the player's Accept on that dialog
+   finishes it. Do not confirm it yourself and do not hide that dialog (2.5.2 did both,
+   which locked the house).
+2. 2.5.4: an item (not a commodity) posted with quantity above 1 is a *multisell*: the
+   client lists it one auction at a time and refuses everything else until it ends.
+   Every post is now tracked until done; nothing else is sent meanwhile; a stalled one
+   offers Release (`C_AuctionHouse.CancelSell`).
+3. 2.5.5: CancelSell did not free a stalled multisell live. Items now post **one unit per
+   click**; the addon never starts a multisell. Commodities still post any quantity.
+4. 2.7.0: the server ignored a single item posted at 98c and the house stayed locked
+   until logout (`/reload` did not clear it). Single items are now refused under 1s
+   (`itemfloor`), and a watchdog says plainly when the house has stopped answering
+   (section 4).
+
+**Rig.** 847 steps, 0 fail, 0 skipped, run on 2026-11-17 against exactly the files in this archive (806 at
+2.5.1).
+
+**Live status, as of 2026-11-17.** Proven in the author's client: scanning, the window,
+posting commodities, and **buying commodities** (2.6.0, seen in the trace 2026-11-14).
+Installed but not yet confirmed in writing: 2.7.0's versions, its name search, its
+close-hitch fix and its stuck-house watchdog. **Never yet seen live:** a single-item
+buyout (`PlaceBid`) completing, and which event reports it. Treat those as rig-verified
+against mocks (section 12).
+
+## 0b. Earlier: what changed from the 2.3.0 handoff to 2.5.1
 
 **New files** (all in the toc; load order in section 1):
 
@@ -108,7 +165,8 @@ Load order is the toc's.
 | `ToolsBook.lua` | Sniper, reset finder | no |
 | `ToolsSell.lua` | Posting advisor, undercut check, owned-auction reading and refresh | no |
 | `ToolsPrice.lua` | Smart price, weekday pattern, auction durations | no |
-| `ToolsPost.lua` | Post and cancel (checks, the calls, logs) | no |
+| `ToolsPost.lua` | Post and cancel (checks, the calls, logs, sell in flight, stuck-house watchdog, post trace) | no |
+| `ToolsBuy.lua` | Buying: baskets, live search, commodity and item purchases, buy log | no |
 | `ToolsFlips.lua` | Vendor flips | no |
 | `ToolsLists.lua` | Shopping lists | no |
 | `Recipes.lua` | Generated recipe table (2,308 recipes, about 160 KB) | no |
@@ -118,11 +176,11 @@ Load order is the toc's.
 | `Watch.lua` | Watchlist and price alerts | no |
 | `Tooltip.lua` | Item tooltip lines | tooltip only |
 | `Minimap.lua` | Minimap button | yes |
-| `UI.lua`, `UITools.lua`, `UIResets.lua`, `UISell.lua`, `UIPost.lua`, `UICraft.lua`, `UICard.lua` | The window | yes |
+| `UI.lua`, `UITools.lua`, `UIResets.lua`, `UISell.lua`, `UIPost.lua`, `UICraft.lua`, `UICard.lua`, `UIBuy.lua` | The window and the Buy panel | yes |
 
 `ToolsPost.lua` has no widgets but reads `AuctionHouseFrame` (to tell whether the house is
-open, and to hand a pending post to the default frame). Its two calls must be reached
-from a real click; see section 2a.
+open, and to leave a pending post to the default frame's dialog). Its two calls, and
+`Tools.BuyStep` in `ToolsBuy.lua`, must be reached from a real click; see section 2a.
 
 ## 2. The tools, and what each needs
 
@@ -132,7 +190,9 @@ cheapest listing. The auction house takes 5% of a sale.
 
 | Tool | Function | What it answers | Needs |
 | --- | --- | --- | --- |
-| Sniper | `Tools.Sniper` | What is listed well under market, and the profit after the cut | A scan under 12 h old; 3 recorded days |
+| Sniper | `Tools.Sniper` | What is listed well under market, and the profit after the cut. Gear is judged per version (below) | A scan under 12 h old; 3 recorded days |
+| Buy | `Tools.BuyStart`, `BuyCheck`, `BuyStep` | Buys a basket handed over by any other tool, live, never over each line's cap | Auction house open; a click per step |
+| Item versions | `Data.Versions`, `Data.Version` | Price, book and history of each version of a gear item | Scans after 2.7.0 |
 | Reset finder | `Tools.Reset` | Thin books where buying the cheap end and re-listing pays; every clear-to level, partial-success model, risk grade | A scan; evidence improves it |
 | Vendor flips | `Tools.VendorFlips` | Merchant items that sell for more on the auction house, by profit per day | A scan; merchant prices (recorded when a merchant window opens) |
 | Crafting flips | `Tools.CraftFlips` | Recipes whose product a vendor pays more for than the materials cost, and how many crafts still pay | A scan and a recipe provider |
@@ -158,27 +218,79 @@ Conventions every tool follows (stated at the top of `Tools.lua`):
 - `Tools.HELP[tool]` holds a title, an explanation, and text for each unavailable state
   and each action. The window shows these on mouseover. Reuse them verbatim.
 - Each tool has a `/dm` subcommand and a `Tools.XxxLines(result)` text form. New since
-  2.3.0: `/dm smart`, `/dm flips`, `/dm craftflip`, `/dm season`.
+  2.3.0: `/dm smart`, `/dm flips`, `/dm craftflip`, `/dm season`; since 2.5.1:
+  `/dm buy`, `/dm unstick`, `/dm posttrace`. Every item argument also takes part of a name.
+
+**Item versions (2.7.0).** One itemID can be several items for sale: "Cruelian Ring of the
+Boar" and "... of the Hawk" share an ID and not a price. On this client the "of the X"
+travels as **bonus IDs** in the item link, not in the old suffix field. `Util.VersionKey`
+turns a link into a key (bonus IDs sorted, joined with "."; link level, spec, context and
+modifiers are left out because they describe the viewer, not the item). The scanner reads
+links for weapon and armour rows only and stores each version under `e.vr[key]` in the
+same layout as the item. A version is *current* when it was read by the item's latest
+scan (`ve.lt == e.lt`). The Sniper evaluates each version on its own book: it needs
+`SNIPE_VER_MIN_LISTINGS` listings and units (default 3, the player can set 1 to 50) and
+its own 3 recorded days. A Buy line for a version only buys auctions whose own link has
+that key. Watch alerts, shopping lists, movers and posting advice still use one price per
+itemID. A row whose link has not loaded yet counts toward the item and toward no version
+(the scan summary reports how many).
+
+**Buying (2.6.0).** Every tool that recommends a purchase hands the Buy panel a basket:
+Sniper (units and "buy up to"), Resets (the clear-to depth), Shopping lists (want and
+cap), Craft profit and Craft to vendor (a recipe and a number of *packs*, one pack being
+one craft's materials), the item card, and Alt-click on any item row. Nothing is bought
+from the scan: it has no auction IDs and is minutes old. Each line is searched live and
+only listings at or under its cap, and never the player's own, are bought. Commodities
+take two clicks (ask the price, then confirm); items take one auction per click. The
+rules are in 2a; the cap arithmetic is in `CALCULATIONS.md` section 27.
 
 The reset finder is deliberately not filtered for the player's protection. Every
 candidate is computed; the mode (conservative, standard, aggressive) changes only the
 filter and the assumed re-list price. Keep that. Unproven candidates must stay visible
 and must not lead the default sort.
 
-### 2a. Posting and cancelling: the rules to keep
+### 2a. Posting, cancelling and buying: the rules to keep
 
-These are the only two actions in the addon that spend the player's gold or move their
+These are the only three actions in the addon that spend the player's gold or move their
 items. Port them as they are.
 
-- **One click, one call.** The client accepts `PostItem`, `PostCommodity` and
-  `CancelAuction` only from a hardware event. The click handler calls `Tools.PostNow` or
-  `Tools.CancelNow` directly, with no timer and no queue in between. There is no "post
-  everything" and no "cancel all", and there cannot be.
+- **One click, one call.** The client accepts `PostItem`, `PostCommodity`,
+  `CancelAuction`, `StartCommoditiesPurchase`, `ConfirmCommoditiesPurchase` and
+  `PlaceBid` only from a hardware event. The click handler calls `Tools.PostNow`,
+  `Tools.CancelNow` or `Tools.BuyStep` directly, with no timer and no queue in between.
+  There is no "post everything" and no "cancel all". "Buy all" fills a basket; each
+  purchase in it is still its own click. The panel may *search* the next line by itself
+  (a search spends nothing); it never buys by itself.
+- **One request at a time.** While a post, a cancel or a purchase is waiting for the
+  house, the addon sends nothing else: no second post, cancel, purchase, scan, seller
+  lookup or owned-auctions request. Every refusal then reads `posting` (or `stuck`, below).
+- **Items post one unit per click.** A non-commodity item with quantity above 1 starts a
+  multisell that, live, stalled and locked the house. The quantity box caps at 1 for
+  items. Commodities post any quantity in one call.
+- **No single item under 1s** (`K.ITEM_MIN_BUYOUT = 100`, reason `itemfloor`). The server
+  silently ignored one at 98c and then refused everything until logout. Of 6,469 item
+  books in the store only one ever showed a listing under 1s, and 80 sit at exactly 1s.
+- **Leave the post dialog alone.** When a post call returns `true` the default frame
+  shows `AUCTION_HOUSE_POST_WARNING`; the player's Accept finishes the post. Do not call
+  the confirm yourself and do not hide that dialog.
+- **Release what you start.** A commodity price the house is holding for us is let go
+  with `CancelCommoditiesPurchase` when it is over the cap, more than 2% over what the
+  search showed, unconfirmed for 30 s, or when the panel or the house closes or a new
+  basket starts. A stalled multisell started by anyone is let go with `CancelSell` when
+  the house closes, or from the Release button / `/dm unstick` after 8 s of silence.
+  Never on a timer by itself: that cuts a slow but healthy multisell short.
+- **Say when the house is stuck.** A request unanswered for 15 s, or any request dropped
+  while nothing of ours is out, sets `I.HouseStuck()`. Every refusal then reads `stuck`:
+  log out to the character screen; `/reload` does not clear it. `/dm posttrace` prints
+  `DecadesMarketDB.postTrace` (1000 rows, sub-second times: what was sent, the throttle
+  events, `UI_ERROR_MESSAGE` text). Keep that trace in a port; it is how every one of
+  these faults was found.
 - **Check, then act.** `PostCheck` and `CancelCheck` send nothing. They return either a
   refusal with a reason or the numbers that will be used. `PostNow` and `CancelNow` call
   the check first, every time.
 - **Refusals are sentences.** Posting: `noapi`, `nobagitem`, `cantsell`, `bound`,
-  `ahclosed`, `scanning`, `throttled`, `badprice`, `badqty`, `nomoney`, `posterror`.
+  `ahclosed`, `scanning`, `posting`, `notready`, `throttled`, `stuck`, `badprice`,
+  `itemfloor`, `badqty`, `nomoney`, `posterror`.
   Cancelling: `noapi`, `ahclosed`, `scanning`, `throttled`, `noowned`, `noauction`,
   `sold`, `notloaded`, `nomoney`, `cancelerror`. The button is never hidden; when it is
   off, hovering says which of these applies.
@@ -193,9 +305,14 @@ items. Port them as they are.
 - **Logs.** `DecadesMarketDB.tools.postLog[realm]` holds up to 300 rows
   `{ t, i, q, u, d, k, mk, ch, dep }` (time, item, quantity, unit price, duration index,
   which price option, market and cheapest price at the time, deposit).
-  `cancelLog[realm]` holds up to 100 rows `{ t, a, i, q, u, cost }`. The post log exists
-  so the smart price can be checked against what actually sold. That check has not been
-  done.
+  `cancelLog[realm]` holds up to 100 rows `{ t, a, i, q, u, cost }`. `buyLog[realm]` holds
+  up to 300 purchases. The post log exists so the smart price can be checked against what
+  actually sold. That check has not been done.
+- **A purchase is only counted when the house reports it.** Commodities:
+  `COMMODITY_PURCHASE_SUCCEEDED` / `_FAILED`. Items: the first of
+  `AUCTION_HOUSE_PURCHASE_COMPLETED`, the gold leaving (`PLAYER_MONEY`), or an error line.
+  With none in 20 s the line says "no answer, check the mailbox" and counts nothing.
+  Bought goods go to the mailbox, not the bags.
 
 ### 2b. The smart price
 
@@ -292,12 +409,52 @@ from Auctionator 346's source for this client plus the author's saved variables.
 - `duration` is an index 1 to 3. On builds 16000 to 19999 (this client) the three are
   2 h, 8 h and 24 h; elsewhere 12, 24, 48. `I.Durations()` holds this. Every rule that
   mentions "one auction" or "the longest auction" reads it from there.
-- A `true` return from a post call means the default frame wants to confirm; we pass the
-  same arguments to the sell frame's `CachePendingPost`, as Auctionator does.
+- A `true` return from a post call means the client is holding the post, not that it was
+  sent. `AuctionHouseFrame` shows its `AUCTION_HOUSE_POST_WARNING` dialog, and that
+  dialog's Accept confirms the cached arguments (`CachePendingPost`). Leave the dialog up
+  and let the player accept it. Revision 3 said to confirm in the same click; 2.5.2 did
+  that and hid the dialog, and the house stayed busy until logout. That advice is withdrawn.
+- An item (not a commodity) posted with quantity above 1 is a multisell:
+  `AUCTION_MULTISELL_START`, `_UPDATE(numPosted, total)`, `_FAILURE`. The house refuses
+  everything else until it ends. Blizzard's sell frame calls `CancelSell()` when it hides;
+  a third-party page must do the same. Live (2.5.4 trace, Flint and Tinder x5) a multisell
+  stalled after START and `CancelSell` did not free it; only a reload did. Hence one unit
+  per click.
+- A single item posted under 1s (98c, 2026-11-14) went out (`THROTTLED_MESSAGE_SENT`) and
+  got no answer at all. Every later request was QUEUED then DROPPED; `CancelSell` and
+  `/reload` did not clear it; a logout did. Commodity posts and item posts of 1s and up in
+  the same session were answered in about 0.5 s. So the server very likely has a 1s floor
+  for item auctions and drops posts below it without an error. If the lockup recurs on a
+  post of 1s or more, that theory is wrong or incomplete; read the trace's `STUCK` and
+  `post detail` rows.
 - Which event reports a refused post on this client is not known. A refusal is detected
   only when the call raises; otherwise the game prints its own error line.
 - Deposits: `CalculateCommodityDeposit(itemID, duration, quantity)` and
   `CalculateItemDeposit(location, duration, quantity)`.
+
+**Buying (new)**
+
+From Auctionator 346's buying code on this client:
+
+- Commodity: `StartCommoditiesPurchase(itemID, quantity)` asks for a price;
+  `COMMODITY_PRICE_UPDATED(unitPrice, totalPrice)` answers (`COMMODITY_PRICE_UNAVAILABLE`
+  when the listings are gone); `ConfirmCommoditiesPurchase(itemID, quantity)` from a
+  second click buys. `CancelCommoditiesPurchase()` lets an unconfirmed price go; leaving
+  one held is the same class of fault as an unreleased multisell. **Proven live 2026-11-14.**
+- Item: `PlaceBid(auctionID, buyoutAmount)` with the amount the search reported; that
+  amount is what is paid. **Not yet seen live**, nor which event reports completion.
+- Live rows: `SendSearchQuery(itemKey, sorts, false)`, then
+  `COMMODITY_SEARCH_RESULTS_UPDATED(itemID)` or `ITEM_SEARCH_RESULTS_UPDATED(itemKey)`,
+  read with `Get*SearchResultInfo`. Rows with `containsOwnerItem` or
+  `containsAccountItem` are the player's own and are never counted or bought.
+
+**Item links (new)**
+
+- `GetReplicateItemLink(i)` gives each scan row's link. On this client the version of a
+  gear item is in the bonus-ID fields (field 13 is the count, the IDs follow), e.g.
+  `item:15269::::::::29:1482:::1:12723::::::` is "Massive Battle Axe of the Gorilla".
+  Whether every row's link is loaded during a live scan is not yet confirmed; the scan
+  summary counts rows that had none.
 
 **Everything else**
 
@@ -320,6 +477,7 @@ Squeeze).
 | Pulse, category heatmap | Market landing view |
 | Movers (live, with momentum sorts) and the pipeline's flips and squeeze | The Movers tool; live data first, board as a second source |
 | Sniper, Resets, Shopping lists | New BUY views |
+| Buy panel, Alt-click-to-buy, Buy buttons on each page | One docked panel beside the Market page or the auction house |
 | Vendor flips, with its Craft to vendor view | Replaces the board-fed Flips tool; needs no board |
 | Post (bags at a smart price, price options, quantity, duration, the Post button) | New SELL view; the main one |
 | Bags with posting advice | SELL view; its "Post this" opens Post |
@@ -357,7 +515,15 @@ Lessons already paid for:
   imported history and never written to our store.
 - Every disabled control says why it is disabled. Every tool says what it needs when it
   has nothing to show.
-- Random-suffix gear is keyed by itemID alone, so its variants share one entry.
+- Gear versions share an itemID. Since 2.7.0 they are priced per version (section 2);
+  anything still keyed by itemID alone (watch alerts, lists, movers, posting advice)
+  mixes them, and a cheap "of the Monkey" must never be called a snipe against the
+  "of the Boar" price.
+- Do heavy work at logout, not on leaving the house. 2.7.0 removed a 1 to 3 s hitch by
+  building the dump only at `PLAYER_LOGOUT` (which `/reload` fires too). The game writes
+  SavedVariables only then, so a dump built earlier is never read sooner.
+- Every buy, post and cancel writes a trace row. When the house misbehaves live, the
+  trace is the only evidence there will be.
 - Soulbound bag items must be excluded from posting advice and from Post.
 - After a post, hold the Post button until the bags have caught up, or a second click
   posts from a count that is already gone.
@@ -375,7 +541,10 @@ momentum reading; the weekday pattern needs 2 full weeks and reaches good at 4.
 ## 6. Data that crosses the boundary
 
 Exact field lists are in `addon/DecadesMarket/DUMP_SPEC.md`. This section is the map.
-Nothing in the dump changed between 2.3.0 and 2.5.1.
+No dump field changed between 2.3.0 and 2.7.0. Since 2.7.0 the dump is built once, at
+logout or `/reload`, rather than when the house closes; the content is the same. Per
+version prices (`e.vr`) live in the addon's own price store and are **not** in the dump
+yet. A server that wants them should carry the version key beside the itemID (decision 11).
 
 **Upload: one scan summary per (realm, faction).** Not raw auctions. Per item: minimum
 unit price, market price, total quantity, auction count, and a depth ladder of up to 12
@@ -476,7 +645,7 @@ file-replacement step owns.
   (`npm install fengari luaparse` outside the archive). A Lua VM with strict widget mocks
   and an auction-house mock built from a real capture. About three minutes.
   `--only=<scenarios>` runs a subset.
-- Expected on this archive: **806 pass, 0 fail**. `real_store` and `tools_real` use the
+- Expected on this archive: **847 pass, 0 fail, 0 skipped** (with the author's saved variables present). `real_store` and `tools_real` use the
   author's saved variables, which are not in the archive, so on your machine they skip and
   the pass count is lower. Zero failures is the bar.
 - What it covers: the scanner (event storm, incomplete rows, bid-only rows, auction house
@@ -492,6 +661,12 @@ file-replacement step owns.
   call per click, the row leaving and returning); owned auctions with a mock that counts
   `QueryOwnedAuctions` and returns unit prices the way the client does; partly sold
   auctions; vendor flips and crafting flips against scripted books.
+- New since 2.5.1: a strict mock of the buy calls (a quote must exist before Confirm, no
+  second purchase while one is held, every request sent while one is held is counted);
+  baskets from every page, packs, caps and bags; the multisell, the stalled post, Release
+  and the stuck-house watchdog; the 1s item floor; version keys from real links, version
+  aggregation in the scanner and the store, version sniping; name search; the dump built
+  only at logout.
 - `tools/addon_test/check_sv.py` runs produced dumps through the Python parser and ingest.
   `check_board.py` covers the exporter and watcher. `python tools/selfcheck.py` checks the
   pipeline.
@@ -513,14 +688,21 @@ file-replacement step owns.
    here that spends a member's gold. If yes, keep the rules in section 2a. If no, ship
    everything up to the smart price and leave the Post button out; the price, its reasons
    and the advice all work without it.
-10. **New.** May post logs be uploaded and pooled, so the smart price can be measured?
+10. May post logs be uploaded and pooled, so the smart price can be measured?
+11. **New.** Should pooled scans carry per-version prices (itemID plus version key) so
+    every member gets them, or stay per itemID as the dump does today?
+12. **New.** Does Decades want to **buy** for the player? Same shape as decision 9: if
+    yes, keep the rules in 2a; if no, the tools still recommend and the Buy buttons go.
 
 ## 12. Known gaps and unproven points
 
-- **Not confirmed live in 2.5.1:** that a post is accepted, that a cancel is accepted and
-  the items arrive by mail, that the repost flow completes, that `CachePendingPost` is the
-  right hand-off when the post call returns true. All are built from Auctionator's source
-  for this client and tested against mocks.
+- **Proven live:** posting commodities and single items of 1s and up; buying commodities.
+- **Not confirmed live:** a single-item buyout (`PlaceBid`) completing and which event
+  reports it; a cancel accepted with the items arriving by mail and the repost flow
+  completing; that `GetReplicateItemLink` returns links for most rows during a scan;
+  the 2.7.0 watchdog firing on a real lockup; the close hitch gone in the author's client.
+- The 1s item floor is inferred from one lockup and the store's listing data, not from a
+  stated server rule.
 - The smart price's thresholds are judgement, not measurement. Nothing here is a forecast.
 - A refused post is only detected when the call raises (section 4).
 - Ledger rows of auctions that ended before 2.5.1 keep a unit price that was divided by
@@ -551,7 +733,8 @@ file-replacement step owns.
 2. Register the recipe provider.
 3. Rebuild the item card and the Market landing view on Decades widgets.
 4. Add the BUY, CRAFT and ME views, and the SELL views without a Post or cancel button.
-5. Decide 9. If yes, add Post and cancel last, and test both in the client before release.
+5. Decide 9 and 12. If yes, add Post, cancel and Buy last, keep the post trace, and test
+   each in the client before release.
 6. Server: accept scan summaries, merge, publish the realm file with 35 days of history.
 7. App: upload, download, freshness, scan-needed hint.
 8. Retire the standalone addon and the local watcher.
